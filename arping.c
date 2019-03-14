@@ -119,29 +119,11 @@ static void usage(void)
 {
 	fprintf(stderr, _(
 		"\nUsage:\n"
-		"  arping [options] <destination>\n"
-		"\nOptions:\n"
-		"  -f            quit on first reply\n"
-		"  -q            be quiet\n"
-		"  -b            keep on broadcasting, do not unicast\n"
-		"  -D            duplicate address detection mode\n"
-		"  -U            unsolicited ARP mode, update your neighbours\n"
-		"  -A            ARP answer mode, update your neighbours\n"
-		"  -V            print version and exit\n"
-		"  -c <count>    how many packets to send\n"
-		"  -w <timeout>  how long to wait for a reply\n"
-		"  -i <interval> set interval between packets (default: 1 second)\n"
-		"  -I <device>   which ethernet device to use"
+		"  arping <interface> <destination>\n"
 	));
 #ifdef DEFAULT_DEVICE_STR
 	fprintf(stderr, "(" DEFAULT_DEVICE_STR ")");
 #endif
-	fprintf(stderr, _(
-				"\n"
-		"  -s <source>   source ip address\n"
-		"  <destination> dns name or ip address\n"
-		"\nFor more details see arping(8).\n"
-	));
 	exit(2);
 }
 
@@ -289,26 +271,6 @@ static int send_pack(struct run_state *ctl)
 
 static int finish(struct run_state *ctl)
 {
-	if (!ctl->quiet) {
-		printf(_("Sent %d probes (%d broadcast(s))\n"), ctl->sent, ctl->brd_sent);
-		printf(_("Received %d response(s)"), ctl->received);
-		if (ctl->brd_recv || ctl->req_recv) {
-			printf(" (");
-			if (ctl->req_recv)
-				printf(_("%d request(s)"), ctl->req_recv);
-			if (ctl->brd_recv)
-				printf(_("%s%d broadcast(s)"),
-				       ctl->req_recv ? ", " : "",
-				       ctl->brd_recv);
-			printf(")");
-		}
-		printf("\n");
-		fflush(stdout);
-	}
-	if (ctl->dad)
-		return (!!ctl->received);
-	if (ctl->unsolicited)
-		return 0;
 	return (!ctl->received);
 }
 
@@ -391,32 +353,7 @@ static int recv_pack(struct run_state *ctl, unsigned char *buf, ssize_t len,
 			return 0;
 	}
 	if (!ctl->quiet) {
-		int s_printed = 0;
-		printf("%s ", FROM->sll_pkttype == PACKET_HOST ? _("Unicast") : _("Broadcast"));
-		printf(_("%s from "), ah->ar_op == htons(ARPOP_REPLY) ? _("reply") : _("request"));
-		printf("%s [", inet_ntoa(src_ip));
 		print_hex(p, ah->ar_hln);
-		printf("] ");
-		if (dst_ip.s_addr != ctl->gsrc.s_addr) {
-			printf(_("for %s "), inet_ntoa(dst_ip));
-			s_printed = 1;
-		}
-		if (memcmp(p + ah->ar_hln + 4, ((struct sockaddr_ll *)&ctl->me)->sll_addr, ah->ar_hln)) {
-			if (!s_printed)
-				printf(_("for "));
-			printf("[");
-			print_hex(p + ah->ar_hln + 4, ah->ar_hln);
-			printf("]");
-		}
-		if (ctl->last.tv_sec) {
-			long usecs = (ts.tv_sec - ctl->last.tv_sec) * 1000000 +
-				(ts.tv_nsec - ctl->last.tv_nsec + 500) / 1000;
-			long msecs = (usecs + 500) / 1000;
-			usecs -= msecs * 1000 - 500;
-			printf(_(" %ld.%03ldms\n"), msecs, usecs);
-		} else {
-			printf(_(" UNSOLICITED?\n"));
-		}
 		fflush(stdout);
 	}
 	ctl->received++;
@@ -821,7 +758,6 @@ int main(int argc, char **argv)
 #endif
 		0
 	};
-	int ch;
 
 	atexit(close_stdout);
 	limit_capabilities(&ctl);
@@ -832,54 +768,13 @@ int main(int argc, char **argv)
 	textdomain (PACKAGE_NAME);
 #endif
 #endif
-	while ((ch = getopt(argc, argv, "h?bfDUAqc:w:i:s:I:V")) != EOF) {
-		switch (ch) {
-		case 'b':
-			ctl.broadcast_only = 1;
-			break;
-		case 'D':
-			ctl.dad = 1;
-			ctl.quit_on_reply = 1;
-			break;
-		case 'U':
-			ctl.unsolicited = 1;
-			break;
-		case 'A':
-			ctl.advert = 1;
-			ctl.unsolicited = 1;
-			break;
-		case 'q':
-			ctl.quiet = 1;
-			break;
-		case 'c':
-			ctl.count = strtol_or_err(optarg, _("invalid argument"), 1, INT_MAX);
-			break;
-		case 'w':
-			ctl.timeout = strtol_or_err(optarg, _("invalid argument"), 0, INT_MAX);
-			break;
-		case 'i':
-			ctl.interval = strtol_or_err(optarg, _("invalid argument"), 0, INT_MAX);
-			break;
-		case 'I':
-			ctl.device.name = optarg;
-			break;
-		case 'f':
-			ctl.quit_on_reply = 1;
-			break;
-		case 's':
-			ctl.source = optarg;
-			break;
-		case 'V':
-			printf(IPUTILS_VERSION("arping"));
-			exit(0);
-		case 'h':
-		case '?':
-		default:
-			usage();
-		}
-	}
-	argc -= optind;
-	argv += optind;
+	if(argc != 3)
+		usage();
+	ctl.device.name = argv[1];
+	ctl.count = 1;
+	ctl.quit_on_reply = 1;
+	argc -= 2;
+	argv += 2;
 
 	if (argc != 1)
 		usage();
@@ -993,11 +888,6 @@ int main(int argc, char **argv)
 	ctl.he = ctl.me;
 
 	find_broadcast_address(&ctl);
-
-	if (!ctl.quiet) {
-		printf(_("ARPING %s "), inet_ntoa(ctl.gdst));
-		printf(_("from %s %s\n"), inet_ntoa(ctl.gsrc), ctl.device.name ? ctl.device.name : "");
-	}
 
 	if (!ctl.source && !ctl.gsrc.s_addr && !ctl.dad)
 		error(2, errno, _("no source address in not-DAD mode"));
